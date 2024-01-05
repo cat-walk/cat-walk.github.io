@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=2">
+<meta name="theme-color" content="#222">
+<meta name="generator" content="Hexo 7.0.0">
+  <link rel="apple-touch-icon" sizes="180x180" href="/images/apple-touch-icon-next.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="/images/favicon-32x32-next.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/images/favicon-16x16-next.png">
+  <link rel="mask-icon" href="/images/logo.svg" color="#222">
+
+<link rel="stylesheet" href="/css/main.css">
+
+
+<link rel="stylesheet" href="/lib/font-awesome/css/all.min.css">
+
+<script id="hexo-configurations">
+    var NexT = window.NexT || {};
+    var CONFIG = {"hostname":"cat-walk.github.io","root":"/","scheme":"Gemini","version":"7.8.0","exturl":false,"sidebar":{"position":"left","display":"post","padding":18,"offset":12,"onmobile":false},"copycode":{"enable":false,"show_result":false,"style":null},"back2top":{"enable":true,"sidebar":false,"scrollpercent":false},"bookmark":{"enable":false,"color":"#222","save":"auto"},"fancybox":false,"mediumzoom":false,"lazyload":false,"pangu":false,"comments":{"style":"tabs","active":null,"storage":true,"lazyload":false,"nav":null},"algolia":{"hits":{"per_page":10},"labels":{"input_placeholder":"Search for Posts","hits_empty":"We didn't find any results for the search: ${query}","hits_stats":"${hits} results found in ${time} ms"}},"localsearch":{"enable":false,"trigger":"auto","top_n_per_article":1,"unescape":false,"preload":false},"motion":{"enable":true,"async":false,"transition":{"post_block":"fadeIn","post_header":"slideDownIn","post_body":"slideDownIn","coll_header":"slideLeftIn","sidebar":"slideUpIn"}}};
+  </script>
+
+  <meta name="description" content="问题分析：mds 进程占用高 CPU现象 CPU 负载高，有个 mds 进程占用较高 CPU（或者是 mds_stores 进程） 风扇狂转">
+<meta property="og:type" content="article">
+<meta property="og:title" content="node_modules 文件过多导致 mac mds 进程占用高CPU">
+<meta property="og:url" content="https://cat-walk.github.io/2024/01/04/node-modules-%E6%96%87%E4%BB%B6%E8%BF%87%E5%A4%9A%E5%AF%BC%E8%87%B4-mac-mds-%E8%BF%9B%E7%A8%8B%E5%8D%A0%E7%94%A8%E9%AB%98CPU/index.html">
+<meta property="og:site_name" content="Less is More">
+<meta property="og:description" content="问题分析：mds 进程占用高 CPU现象 CPU 负载高，有个 mds 进程占用较高 CPU（或者是 mds_stores 进程） 风扇狂转">
+<meta property="og:locale" content="zh_CN">
+<meta property="og:image" content="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/img_v3_026q_2b2ae4df-8a9b-45b5-ba70-2e9b0796920g.jpg">
+<meta property="og:image" content="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/20240104210504.png">
+<meta property="og:image" content="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/image-20240105%E4%B8%8B%E5%8D%8865834349.png">
+<meta property="og:image" content="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/image-20240105%E4%B8%8B%E5%8D%8870829236.png">
+<meta property="og:image" content="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/image-20240105%E4%B8%8B%E5%8D%8870810835.png">
+<meta property="og:image" content="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/image-20240105%E4%B8%8B%E5%8D%8874941281.png">
+<meta property="article:published_time" content="2024-01-04T10:52:29.000Z">
+<meta property="article:modified_time" content="2024-01-05T13:04:56.843Z">
+<meta property="article:author" content="Peiyang Yang">
+<meta property="article:tag" content="mac">
+<meta property="article:tag" content="前端">
+<meta property="article:tag" content="node_modules">
+<meta property="article:tag" content="node">
+<meta property="article:tag" content="spotlight">
+<meta property="article:tag" content="mac聚焦">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/img_v3_026q_2b2ae4df-8a9b-45b5-ba70-2e9b0796920g.jpg">
+
+<link rel="canonical" href="https://cat-walk.github.io/2024/01/04/node-modules-%E6%96%87%E4%BB%B6%E8%BF%87%E5%A4%9A%E5%AF%BC%E8%87%B4-mac-mds-%E8%BF%9B%E7%A8%8B%E5%8D%A0%E7%94%A8%E9%AB%98CPU/">
+
+
+<script id="page-configurations">
+  // https://hexo.io/docs/variables.html
+  CONFIG.page = {
+    sidebar: "",
+    isHome : false,
+    isPost : true,
+    lang   : 'zh-CN'
+  };
+</script>
+
+  <title>node_modules 文件过多导致 mac mds 进程占用高CPU | Less is More</title>
+  
+    <script async src="https://www.googletagmanager.com/gtag/js?id=GTM-5RCLNQJN"></script>
+    <script>
+      if (CONFIG.hostname === location.hostname) {
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'GTM-5RCLNQJN');
+      }
+    </script>
+
+
+
+
+
+
+  <noscript>
+  <style>
+  .use-motion .brand,
+  .use-motion .menu-item,
+  .sidebar-inner,
+  .use-motion .post-block,
+  .use-motion .pagination,
+  .use-motion .comments,
+  .use-motion .post-header,
+  .use-motion .post-body,
+  .use-motion .collection-header { opacity: initial; }
+
+  .use-motion .site-title,
+  .use-motion .site-subtitle {
+    opacity: initial;
+    top: initial;
+  }
+
+  .use-motion .logo-line-before i { left: initial; }
+  .use-motion .logo-line-after i { right: initial; }
+  </style>
+</noscript>
+
+</head>
+
+<body itemscope itemtype="http://schema.org/WebPage">
+  <div class="container use-motion">
+    <div class="headband"></div>
+
+    <header class="header" itemscope itemtype="http://schema.org/WPHeader">
+      <div class="header-inner"><div class="site-brand-container">
+  <div class="site-nav-toggle">
+    <div class="toggle" aria-label="切换导航栏">
+      <span class="toggle-line toggle-line-first"></span>
+      <span class="toggle-line toggle-line-middle"></span>
+      <span class="toggle-line toggle-line-last"></span>
+    </div>
+  </div>
+
+  <div class="site-meta">
+
+    <a href="/" class="brand" rel="start">
+      <span class="logo-line-before"><i></i></span>
+      <h1 class="site-title">Less is More</h1>
+      <span class="logo-line-after"><i></i></span>
+    </a>
+  </div>
+
+  <div class="site-nav-right">
+    <div class="toggle popup-trigger">
+    </div>
+  </div>
+</div>
+
+
+
+
+<nav class="site-nav">
+  <ul id="menu" class="main-menu menu">
+        <li class="menu-item menu-item-home">
+
+    <a href="/" rel="section"><i class="fa fa-home fa-fw"></i>首页</a>
+
+  </li>
+        <li class="menu-item menu-item-archives">
+
+    <a href="/archives/" rel="section"><i class="fa fa-archive fa-fw"></i>归档</a>
+
+  </li>
+  </ul>
+</nav>
+
+
+
+
+</div>
+    </header>
+
+    
+  <div class="back-to-top">
+    <i class="fa fa-arrow-up"></i>
+    <span>0%</span>
+  </div>
+
+
+    <main class="main">
+      <div class="main-inner">
+        <div class="content-wrap">
+          
+
+          <div class="content post posts-expand">
+            
+
+    
+  
+  
+  <article itemscope itemtype="http://schema.org/Article" class="post-block" lang="zh-CN">
+    <link itemprop="mainEntityOfPage" href="https://cat-walk.github.io/2024/01/04/node-modules-%E6%96%87%E4%BB%B6%E8%BF%87%E5%A4%9A%E5%AF%BC%E8%87%B4-mac-mds-%E8%BF%9B%E7%A8%8B%E5%8D%A0%E7%94%A8%E9%AB%98CPU/">
+
+    <span hidden itemprop="author" itemscope itemtype="http://schema.org/Person">
+      <meta itemprop="image" content="/images/avatar.gif">
+      <meta itemprop="name" content="Peiyang Yang">
+      <meta itemprop="description" content="">
+    </span>
+
+    <span hidden itemprop="publisher" itemscope itemtype="http://schema.org/Organization">
+      <meta itemprop="name" content="Less is More">
+    </span>
+      <header class="post-header">
+        <h1 class="post-title" itemprop="name headline">
+          node_modules 文件过多导致 mac mds 进程占用高CPU
+        </h1>
+
+        <div class="post-meta">
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-calendar"></i>
+              </span>
+              <span class="post-meta-item-text">发表于</span>
+
+              <time title="创建时间：2024-01-04 18:52:29" itemprop="dateCreated datePublished" datetime="2024-01-04T18:52:29+08:00">2024-01-04</time>
+            </span>
+              <span class="post-meta-item">
+                <span class="post-meta-item-icon">
+                  <i class="far fa-calendar-check"></i>
+                </span>
+                <span class="post-meta-item-text">更新于</span>
+                <time title="修改时间：2024-01-05 21:04:56" itemprop="dateModified" datetime="2024-01-05T21:04:56+08:00">2024-01-05</time>
+              </span>
+            <span class="post-meta-item">
+              <span class="post-meta-item-icon">
+                <i class="far fa-folder"></i>
+              </span>
+              <span class="post-meta-item-text">分类于</span>
+                <span itemprop="about" itemscope itemtype="http://schema.org/Thing">
+                  <a href="/categories/%E5%89%8D%E7%AB%AF/" itemprop="url" rel="index"><span itemprop="name">前端</span></a>
+                </span>
+            </span>
+
+          
+  
+  <span class="post-meta-item">
+    
+      <span class="post-meta-item-icon">
+        <i class="far fa-comment"></i>
+      </span>
+      <span class="post-meta-item-text">Disqus：</span>
+    
+    <a title="disqus" href="/2024/01/04/node-modules-%E6%96%87%E4%BB%B6%E8%BF%87%E5%A4%9A%E5%AF%BC%E8%87%B4-mac-mds-%E8%BF%9B%E7%A8%8B%E5%8D%A0%E7%94%A8%E9%AB%98CPU/#disqus_thread" itemprop="discussionUrl">
+      <span class="post-comments-count disqus-comment-count" data-disqus-identifier="2024/01/04/node-modules-文件过多导致-mac-mds-进程占用高CPU/" itemprop="commentCount"></span>
+    </a>
+  </span>
+  
+  
+
+        </div>
+      </header>
+
+    
+    
+    
+    <div class="post-body" itemprop="articleBody">
+
+      
+        <h2 id="问题分析：mds-进程占用高-CPU"><a href="#问题分析：mds-进程占用高-CPU" class="headerlink" title="问题分析：mds 进程占用高 CPU"></a>问题分析：mds 进程占用高 CPU</h2><h3 id="现象"><a href="#现象" class="headerlink" title="现象"></a>现象</h3><ul>
+<li>CPU 负载高，有个 mds 进程占用较高 CPU（或者是 mds_stores 进程）</li>
+<li>风扇狂转</li>
+</ul>
+<span id="more"></span>
+
+<img src="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/img_v3_026q_2b2ae4df-8a9b-45b5-ba70-2e9b0796920g.jpg" alt="img_v3_026q_2b2ae4df-8a9b-45b5-ba70-2e9b0796920g" style="zoom: 33%;" />
+
+<h3 id="分析"><a href="#分析" class="headerlink" title="分析"></a>分析</h3><p>mds, mds_stores 这 2 个进程，是 Mac 自带的搜索功能（Spotlight）的后台进程，</p>
+<img src="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/20240104210504.png" style="zoom: 50%;" />
+
+<p>该进程会在后台索引本机的所有文件，而 <strong>node_modules 里文件数量非常多</strong>，就导致了这个进程的工作量一直很高，特别是当你<strong>重新安装依赖、下载新项目的依赖</strong>后。</p>
+<h2 id="如何解决"><a href="#如何解决" class="headerlink" title="如何解决"></a>如何解决</h2><h3 id="临时方案"><a href="#临时方案" class="headerlink" title="临时方案"></a>临时方案</h3><p>通过下面的指令，可以关闭索引，执行完后大概 3 ～ 5 分钟，这个进程就会逐渐关掉，电脑风扇也不狂转了。</p>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">sudo mdutil -a -i off</span><br></pre></td></tr></table></figure>
+
+<p>但是电脑重启后，Spotlight 索引又会自动开始，所以为了根本解决这个问题，还需要后面的长期方案。</p>
+<h3 id="长期方案"><a href="#长期方案" class="headerlink" title="长期方案"></a>长期方案</h3><h4 id="“聚焦”设置"><a href="#“聚焦”设置" class="headerlink" title="“聚焦”设置"></a>“聚焦”设置</h4><ul>
+<li>取消索引：平常用不到的文件类型</li>
+</ul>
+<img src="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/image-20240105%E4%B8%8B%E5%8D%8865834349.png" alt="image-20240105下午65834349" style="zoom:33%;" />
+
+<ul>
+<li><p>取消索引：包含 node_modules 文件夹</p>
+<blockquote>
+<p>尽量把项目代码都放在一个统一的文件夹下，如 code-group 文件夹</p>
+</blockquote>
+</li>
+</ul>
+<img src="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/image-20240105%E4%B8%8B%E5%8D%8870829236.png" alt="image-20240105下午70829236" style="zoom:33%;" />
+
+<img src="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/image-20240105%E4%B8%8B%E5%8D%8870810835.png" alt="image-20240105下午70810835" style="zoom: 50%;" />
+
+<h4 id="新增-fix-spotlight-指令"><a href="#新增-fix-spotlight-指令" class="headerlink" title="新增 fix-spotlight 指令"></a>新增 fix-spotlight 指令</h4><ol>
+<li>在 .zshrc 文件中，增加一个指令，用于避免 spotlight 检索 node_modules</li>
+</ol>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">echo</span> <span class="string">&quot;alias fix-spotlight=\&quot;find . -type d -path &#x27;./.*&#x27; -prune -o -path &#x27;./Pictures*&#x27; -prune -o -path &#x27;./Library*&#x27; -prune -o -path &#x27;*node_modules/*&#x27; -prune -o -type d -name &#x27;node_modules&#x27; -exec touch &#x27;&#123;&#125;/.metadata_never_index&#x27; \; -print\&quot;&quot;</span> &gt;&gt; ~/.zshrc</span><br></pre></td></tr></table></figure>
+
+<blockquote>
+<p>如果你的 shell 不是 zsh，那就上面的指令最后声明的写入目标文件，改成你用的 shell rc 文件，如 ～&#x2F;.bash_profile</p>
+</blockquote>
+<ol start="2">
+<li>使新指令生效</li>
+</ol>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="built_in">source</span> ~/.zshrc</span><br></pre></td></tr></table></figure>
+
+<ol start="3">
+<li>在根目录执行指令</li>
+</ol>
+<figure class="highlight bash"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">fix-spotlight</span><br></pre></td></tr></table></figure>
+
+<p>执行结果：</p>
+<p>该指令会往所有 node_modules 文件夹里，增加一个 <code>.metadata_never_index</code> 文件，Spotlight 就不会索引这个文件夹。</p>
+<img src="https://dogfun.oss-cn-beijing.aliyuncs.com/blog/image-20240105%E4%B8%8B%E5%8D%8874941281.png" alt="image-20240105下午74941281" style="zoom:33%;" />
+
+<p>后续，你只需要每隔一段时间（如每月）执行一下 <code>fix-spotlight</code> 即可。</p>
+<h4 id="换个性能好的-mac"><a href="#换个性能好的-mac" class="headerlink" title="换个性能好的 mac"></a>换个性能好的 mac</h4><p>如果你不想折腾，换个 m1 起步的 mac，也能解决部分问题 :)</p>
+<h2 id="参考资料"><a href="#参考资料" class="headerlink" title="参考资料"></a>参考资料</h2><ol>
+<li><a target="_blank" rel="noopener" href="https://github.com/yarnpkg/yarn/issues/6453">https://github.com/yarnpkg/yarn/issues/6453</a></li>
+<li><a target="_blank" rel="noopener" href="https://lkxed.github.io/posts/mac-os-spotlight/">https://lkxed.github.io/posts/mac-os-spotlight/</a></li>
+<li><a target="_blank" rel="noopener" href="https://www.jianshu.com/p/d76dbc097521">https://www.jianshu.com/p/d76dbc097521</a></li>
+<li><a target="_blank" rel="noopener" href="https://blog.csdn.net/xukai871105/article/details/35834703">https://blog.csdn.net/xukai871105/article/details/35834703</a></li>
+<li><a target="_blank" rel="noopener" href="https://www.cnblogs.com/xuchunlin/p/5750221.html">https://www.cnblogs.com/xuchunlin/p/5750221.html</a></li>
+</ol>
+
+    </div>
+
+    
+    
+    
+
+      <footer class="post-footer">
+          <div class="post-tags">
+              <a href="/tags/mac/" rel="tag"># mac</a>
+              <a href="/tags/%E5%89%8D%E7%AB%AF/" rel="tag"># 前端</a>
+              <a href="/tags/node-modules/" rel="tag"># node_modules</a>
+              <a href="/tags/node/" rel="tag"># node</a>
+              <a href="/tags/spotlight/" rel="tag"># spotlight</a>
+              <a href="/tags/mac%E8%81%9A%E7%84%A6/" rel="tag"># mac聚焦</a>
+          </div>
+
+        
+
+
+        
+    <div class="post-nav">
+      <div class="post-nav-item">
+    <a href="/2020/03/11/%E7%8E%8B%E8%80%85%E6%A8%A1%E6%8B%9F%E6%88%98%E5%BF%83%E5%BE%97%EF%BC%88%E6%9C%89%E7%A9%BA%E5%B0%B1%E6%9B%B4%EF%BC%89/" rel="prev" title="王者模拟战心得（有空就更）">
+      <i class="fa fa-chevron-left"></i> 王者模拟战心得（有空就更）
+    </a></div>
+      <div class="post-nav-item"></div>
+    </div>
+      </footer>
+    
+  </article>
+  
+  
+  
+
+
+
+          </div>
+          
+    
+  <div class="comments">
+    <div id="disqus_thread">
+      <noscript>Please enable JavaScript to view the comments powered by Disqus.</noscript>
+    </div>
+  </div>
+  
+
+<script>
+  window.addEventListener('tabs:register', () => {
+    let { activeClass } = CONFIG.comments;
+    if (CONFIG.comments.storage) {
+      activeClass = localStorage.getItem('comments_active') || activeClass;
+    }
+    if (activeClass) {
+      let activeTab = document.querySelector(`a[href="#comment-${activeClass}"]`);
+      if (activeTab) {
+        activeTab.click();
+      }
+    }
+  });
+  if (CONFIG.comments.storage) {
+    window.addEventListener('tabs:click', event => {
+      if (!event.target.matches('.tabs-comment .tab-content .tab-pane')) return;
+      let commentClass = event.target.classList[1];
+      localStorage.setItem('comments_active', commentClass);
+    });
+  }
+</script>
+
+        </div>
+          
+  
+  <div class="toggle sidebar-toggle">
+    <span class="toggle-line toggle-line-first"></span>
+    <span class="toggle-line toggle-line-middle"></span>
+    <span class="toggle-line toggle-line-last"></span>
+  </div>
+
+  <aside class="sidebar">
+    <div class="sidebar-inner">
+
+      <ul class="sidebar-nav motion-element">
+        <li class="sidebar-nav-toc">
+          文章目录
+        </li>
+        <li class="sidebar-nav-overview">
+          站点概览
+        </li>
+      </ul>
+
+      <!--noindex-->
+      <div class="post-toc-wrap sidebar-panel">
+          <div class="post-toc motion-element"><ol class="nav"><li class="nav-item nav-level-2"><a class="nav-link" href="#%E9%97%AE%E9%A2%98%E5%88%86%E6%9E%90%EF%BC%9Amds-%E8%BF%9B%E7%A8%8B%E5%8D%A0%E7%94%A8%E9%AB%98-CPU"><span class="nav-number">1.</span> <span class="nav-text">问题分析：mds 进程占用高 CPU</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#%E7%8E%B0%E8%B1%A1"><span class="nav-number">1.1.</span> <span class="nav-text">现象</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E5%88%86%E6%9E%90"><span class="nav-number">1.2.</span> <span class="nav-text">分析</span></a></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%A6%82%E4%BD%95%E8%A7%A3%E5%86%B3"><span class="nav-number">2.</span> <span class="nav-text">如何解决</span></a><ol class="nav-child"><li class="nav-item nav-level-3"><a class="nav-link" href="#%E4%B8%B4%E6%97%B6%E6%96%B9%E6%A1%88"><span class="nav-number">2.1.</span> <span class="nav-text">临时方案</span></a></li><li class="nav-item nav-level-3"><a class="nav-link" href="#%E9%95%BF%E6%9C%9F%E6%96%B9%E6%A1%88"><span class="nav-number">2.2.</span> <span class="nav-text">长期方案</span></a><ol class="nav-child"><li class="nav-item nav-level-4"><a class="nav-link" href="#%E2%80%9C%E8%81%9A%E7%84%A6%E2%80%9D%E8%AE%BE%E7%BD%AE"><span class="nav-number">2.2.1.</span> <span class="nav-text">“聚焦”设置</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E6%96%B0%E5%A2%9E-fix-spotlight-%E6%8C%87%E4%BB%A4"><span class="nav-number">2.2.2.</span> <span class="nav-text">新增 fix-spotlight 指令</span></a></li><li class="nav-item nav-level-4"><a class="nav-link" href="#%E6%8D%A2%E4%B8%AA%E6%80%A7%E8%83%BD%E5%A5%BD%E7%9A%84-mac"><span class="nav-number">2.2.3.</span> <span class="nav-text">换个性能好的 mac</span></a></li></ol></li></ol></li><li class="nav-item nav-level-2"><a class="nav-link" href="#%E5%8F%82%E8%80%83%E8%B5%84%E6%96%99"><span class="nav-number">3.</span> <span class="nav-text">参考资料</span></a></li></ol></div>
+      </div>
+      <!--/noindex-->
+
+      <div class="site-overview-wrap sidebar-panel">
+        <div class="site-author motion-element" itemprop="author" itemscope itemtype="http://schema.org/Person">
+  <p class="site-author-name" itemprop="name">Peiyang Yang</p>
+  <div class="site-description" itemprop="description"></div>
+</div>
+<div class="site-state-wrap motion-element">
+  <nav class="site-state">
+      <div class="site-state-item site-state-posts">
+          <a href="/archives/">
+        
+          <span class="site-state-item-count">10</span>
+          <span class="site-state-item-name">日志</span>
+        </a>
+      </div>
+      <div class="site-state-item site-state-categories">
+            <a href="/categories/">
+        <span class="site-state-item-count">3</span>
+        <span class="site-state-item-name">分类</span></a>
+      </div>
+      <div class="site-state-item site-state-tags">
+            <a href="/tags/">
+        <span class="site-state-item-count">16</span>
+        <span class="site-state-item-name">标签</span></a>
+      </div>
+  </nav>
+</div>
+  <div class="links-of-author motion-element">
+      <span class="links-of-author-item">
+        <a href="https://github.com/cat-walk" title="GitHub → https:&#x2F;&#x2F;github.com&#x2F;cat-walk" rel="noopener" target="_blank"><i class="fab fa-github fa-fw"></i>GitHub</a>
+      </span>
+  </div>
+
+
+
+      </div>
+
+    </div>
+  </aside>
+  <div id="sidebar-dimmer"></div>
+
+
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        
+
+        
+
+<div class="copyright">
+  
+  &copy; 
+  <span itemprop="copyrightYear">2024</span>
+  <span class="with-love">
+    <i class="fa fa-heart"></i>
+  </span>
+  <span class="author" itemprop="copyrightHolder">Peiyang Yang</span>
+</div>
+  <div class="powered-by">由 <a href="https://hexo.io/" class="theme-link" rel="noopener" target="_blank">Hexo</a> & <a href="https://theme-next.org/" class="theme-link" rel="noopener" target="_blank">NexT.Gemini</a> 强力驱动
+  </div>
+
+        
+
+
+
+
+
+
+
+
+      </div>
+    </footer>
+  </div>
+
+  
+  <script src="/lib/anime.min.js"></script>
+  <script src="/lib/velocity/velocity.min.js"></script>
+  <script src="/lib/velocity/velocity.ui.min.js"></script>
+
+<script src="/js/utils.js"></script>
+
+<script src="/js/motion.js"></script>
+
+
+<script src="/js/schemes/pisces.js"></script>
+
+
+<script src="/js/next-boot.js"></script>
+
+
+
+
+  
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  
+
+  
+
+<script>
+  function loadCount() {
+    var d = document, s = d.createElement('script');
+    s.src = 'https://meiyun.disqus.com/count.js';
+    s.id = 'dsq-count-scr';
+    (d.head || d.body).appendChild(s);
+  }
+  // defer loading until the whole page loading is completed
+  window.addEventListener('load', loadCount, false);
+</script>
+<script>
+  var disqus_config = function() {
+    this.page.url = "https://cat-walk.github.io/2024/01/04/node-modules-%E6%96%87%E4%BB%B6%E8%BF%87%E5%A4%9A%E5%AF%BC%E8%87%B4-mac-mds-%E8%BF%9B%E7%A8%8B%E5%8D%A0%E7%94%A8%E9%AB%98CPU/";
+    this.page.identifier = "2024/01/04/node-modules-文件过多导致-mac-mds-进程占用高CPU/";
+    this.page.title = "node_modules 文件过多导致 mac mds 进程占用高CPU";
+    };
+  NexT.utils.loadComments(document.querySelector('#disqus_thread'), () => {
+    if (window.DISQUS) {
+      DISQUS.reset({
+        reload: true,
+        config: disqus_config
+      });
+    } else {
+      var d = document, s = d.createElement('script');
+      s.src = 'https://meiyun.disqus.com/embed.js';
+      s.setAttribute('data-timestamp', '' + +new Date());
+      (d.head || d.body).appendChild(s);
+    }
+  });
+</script>
+
+</body>
+</html>
